@@ -58,22 +58,37 @@ pub struct Inputs {
     pub default: Option<String>,
 }
 
-pub fn inputs() -> Inputs {
-    let host = cpal::default_host();
-    let mut devices: Vec<String> = host
+/// Every input device, with the host's default included even when the host
+/// doesn't enumerate it (ALSA's "Default Audio Device" is only reachable that way).
+fn all_inputs(host: &cpal::Host) -> (Vec<(String, cpal::Device)>, Option<String>) {
+    let mut devices: Vec<(String, cpal::Device)> = host
         .input_devices()
         .into_iter()
         .flatten()
-        .filter(|d| d.default_input_config().is_ok())
-        .map(|d| device_name(&d))
+        .map(|d| (device_name(&d), d))
+        .collect();
+    let default = host.default_input_device();
+    let default_name = default.as_ref().map(device_name);
+    if let (Some(name), Some(d)) = (&default_name, default)
+        && !devices.iter().any(|(n, _)| n == name)
+    {
+        devices.push((name.clone(), d));
+    }
+    (devices, default_name)
+}
+
+pub fn inputs() -> Inputs {
+    let host = cpal::default_host();
+    let (found, default) = all_inputs(&host);
+    let mut devices: Vec<String> = found
+        .into_iter()
+        .filter(|(_, d)| d.default_input_config().is_ok())
+        .map(|(n, _)| n)
         .filter(|n| !n.is_empty())
         .collect();
     devices.sort();
     devices.dedup();
-    let default = host
-        .default_input_device()
-        .map(|d| device_name(&d))
-        .filter(|n| devices.contains(n));
+    let default = default.filter(|n| devices.contains(n));
     Inputs { devices, default }
 }
 
@@ -154,12 +169,8 @@ pub fn input_rows(wanted: &str, inputs: &Inputs) -> Vec<InputRow> {
 impl Recorder {
     pub fn start(cfg: &Config) -> Result<Recorder> {
         let host = cpal::default_host();
-        let devices: Vec<(String, cpal::Device)> = host
-            .input_devices()?
-            .map(|d| (device_name(&d), d))
-            .collect();
+        let (devices, default) = all_inputs(&host);
         let names: Vec<String> = devices.iter().map(|(n, _)| n.clone()).collect();
-        let default = host.default_input_device().map(|d| device_name(&d));
         let chosen = match resolve(&cfg.input_device, &names, default.as_deref()) {
             Mic::Ready { name, .. } => name,
             other => {

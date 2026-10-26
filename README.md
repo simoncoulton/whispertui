@@ -143,3 +143,15 @@ accent: "#ff9e64"
 
 Colours are `#rrggbb`, an ANSI name (`reset`, `red`, `darkgray`, ...) or 0-255.
 Themes can also be defined under `themes:` in `config.yml`.
+
+# Troubleshooting
+
+You will need whisper-cli, and if you're running Arch you may not be able to just install it via pacman or aur. Instead run the following:
+
+```
+git clone https://github.com/ggml-org/whisper.cpp.git
+cd whisper.cpp
+cmake -B build
+cmake --build build -j --config Release
+sudo cp build/bin/whisper-* /usr/local/bin/
+```
