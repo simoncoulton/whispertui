@@ -3,7 +3,7 @@
 use crate::audio::InputRow;
 use crate::config::Layout;
 use crate::daemon::Status;
-use crate::history::Entry;
+use crate::history::{Entry, Status as Progress};
 use crate::models::Row;
 use crate::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -30,6 +30,8 @@ pub enum Action {
     QuitAndStop,
     Copy(String),
     Delete(String),
+    /// `t`: transcribe a failed recording again.
+    Retry(String),
     ToggleRecord,
     Play {
         id: String,
@@ -286,6 +288,12 @@ impl App {
                         path: e.audio.clone()?,
                     })
                 });
+            }
+            KeyCode::Char('t') => {
+                return self
+                    .selected_entry()
+                    .filter(|e| e.status == Progress::Failed)
+                    .map(|e| Action::Retry(e.id.clone()));
             }
             KeyCode::Char('d') if self.selected_entry().is_some() => {
                 self.mode = Mode::ConfirmDelete
@@ -578,6 +586,16 @@ pub mod tests {
             text: text.into(),
             duration_secs: 2.5,
             audio: Some(PathBuf::from(format!("/tmp/{id}.wav"))),
+            status: Progress::Done,
+            error: None,
+        }
+    }
+
+    pub fn failed(id: &str) -> Entry {
+        Entry {
+            status: Progress::Failed,
+            error: Some("whisper-cli: boom".into()),
+            ..entry(id, "")
         }
     }
 
@@ -599,6 +617,16 @@ pub mod tests {
         let mut ctrl_c = ch('c');
         ctrl_c.modifiers = KeyModifiers::CONTROL;
         assert_eq!(a.handle_key(ctrl_c), Some(Action::Quit));
+    }
+
+    #[test]
+    fn t_transcribes_only_failed_recordings() {
+        let mut a = app();
+        assert_eq!(a.handle_key(ch('t')), None);
+        a.set_entries(vec![failed("9"), entry("1", "ok")]);
+        assert_eq!(a.handle_key(ch('t')), Some(Action::Retry("9".into())));
+        a.handle_key(key(KeyCode::Down));
+        assert_eq!(a.handle_key(ch('t')), None);
     }
 
     #[test]

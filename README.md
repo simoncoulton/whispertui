@@ -38,6 +38,7 @@ You never need the TUI open to dictate.
 | `y` | Copy the selected transcript |
 | `space` | Start / stop recording |
 | `a` | Play the audio; press `a` again to stop it |
+| `t` | Transcribe a failed recording again (failed and unfinished ones are listed in red; audio is always kept) |
 | `d` | Delete the recording (asks first; removes its audio) |
 | `/` | Search transcripts (`Esc` clears) |
 | `↑↓`, `j k`, `g G`, `PgUp PgDn` | Navigate |

@@ -1,6 +1,6 @@
 use crate::audio::{self, Recorder};
 use crate::config::{self, Config};
-use crate::history::{self, Entry};
+use crate::history::{self, Entry, Status as Progress};
 use crate::{hotkey, models, sys};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -181,6 +181,11 @@ pub fn run() -> Result<()> {
     // Safe to clear: we hold the lock, so nothing live is behind an old socket file.
     let _ = std::fs::remove_file(config::socket_path());
 
+    match history::recover() {
+        Ok(0) => {}
+        Ok(n) => eprintln!("{n} unfinished recording(s) marked failed; press t to transcribe"),
+        Err(e) => eprintln!("could not recover unfinished recordings: {e:#}"),
+    }
     let cfg = Config::load()?;
     if let Err(e) = hotkey::parse(&cfg.hotkey) {
         bail!("invalid hotkey '{}': {e}", cfg.hotkey);
@@ -256,6 +261,7 @@ fn spawn_socket(shared: Arc<Shared>, tx: Sender<Cmd>) -> Result<()> {
                 "start" => send(&tx, Cmd::Start),
                 "stop" => send(&tx, Cmd::Stop),
                 "cancel" => send(&tx, Cmd::Cancel),
+                r if r.starts_with("retry ") => retry(&shared, r[6..].trim()),
                 "shutdown" => {
                     let _ = std::fs::remove_file(config::socket_path());
                     std::thread::spawn(|| {
@@ -400,32 +406,20 @@ fn process(cfg: &Config, samples: Vec<f32>, secs: f32) -> Result<()> {
     std::fs::create_dir_all(config::recordings_dir())?;
     audio::write_wav(&wav, &samples)?;
 
-    let result = transcribe(cfg, &wav);
-    let text = match result {
-        Ok(t) => t,
-        Err(e) => {
-            // Keep the audio so it isn't lost when whisper fails.
-            return Err(e.context(format!("audio kept at {}", wav.display())));
-        }
+    // Listed straight away, so a recording that never finishes is still visible.
+    let mut entry = Entry {
+        id,
+        created: now,
+        text: String::new(),
+        duration_secs: secs,
+        audio: Some(wav),
+        status: Progress::Transcribing,
+        error: None,
     };
+    history::add(entry.clone(), cfg.max_history)?;
+    let text = finish(cfg, &mut entry, true)?;
     if text.is_empty() {
-        let _ = std::fs::remove_file(&wav);
-        eprintln!("empty transcript suppressed");
         return Ok(());
-    }
-
-    history::add(
-        Entry {
-            id,
-            created: now,
-            text: text.clone(),
-            duration_secs: secs,
-            audio: cfg.keep_audio.then(|| wav.clone()),
-        },
-        cfg.max_history,
-    )?;
-    if !cfg.keep_audio {
-        let _ = std::fs::remove_file(&wav);
     }
     if cfg.copy_to_clipboard {
         sys::copy(&text)?;
@@ -433,13 +427,83 @@ fn process(cfg: &Config, samples: Vec<f32>, secs: f32) -> Result<()> {
             sys::paste();
         }
     }
-    if cfg.sounds {
+    Ok(())
+}
+
+/// Transcribe `entry`'s audio and record the outcome in the history. On
+/// failure the audio stays and the entry becomes `Failed`. Returns the text.
+fn finish(cfg: &Config, entry: &mut Entry, announce: bool) -> Result<String> {
+    let wav = entry.audio.clone().context("no audio to transcribe")?;
+    let text = match transcribe(cfg, &wav) {
+        Ok(t) => t,
+        Err(e) => {
+            entry.status = Progress::Failed;
+            entry.error = Some(format!("{e:#}"));
+            history::update(entry.clone())?;
+            return Err(e.context(format!("audio kept at {}", wav.display())));
+        }
+    };
+    if text.is_empty() {
+        let _ = std::fs::remove_file(&wav);
+        history::delete(&entry.id)?;
+        eprintln!("empty transcript suppressed");
+        return Ok(text);
+    }
+    entry.text = text.clone();
+    entry.status = Progress::Done;
+    entry.error = None;
+    if !cfg.keep_audio {
+        let _ = std::fs::remove_file(&wav);
+        entry.audio = None;
+    }
+    history::update(entry.clone())?;
+    if announce && cfg.sounds {
         sys::sound("Glass");
     }
-    if cfg.notifications {
+    if announce && cfg.notifications {
         sys::notify("Transcribed", &text.chars().take(120).collect::<String>());
     }
-    Ok(())
+    Ok(text)
+}
+
+/// `retry <id>`: transcribe a failed recording again, in the background.
+fn retry(shared: &Arc<Shared>, id: &str) -> String {
+    let cfg = shared.cfg.read().unwrap().clone();
+    if !models::installed(&cfg.model) {
+        return format!("error: {}", missing_model(&cfg.model));
+    }
+    let Some(mut entry) = history::find(id) else {
+        return "error: no such recording".into();
+    };
+    if entry.status != Progress::Failed {
+        return "error: that recording isn't failed".into();
+    }
+    if !entry.audio.as_ref().is_some_and(|p| p.is_file()) {
+        return "error: its audio file is gone".into();
+    }
+    entry.status = Progress::Transcribing;
+    entry.error = None;
+    if let Err(e) = history::update(entry.clone()) {
+        return format!("error: {e:#}");
+    }
+    shared.jobs.fetch_add(1, Ordering::Relaxed);
+    let sh = shared.clone();
+    std::thread::spawn(move || {
+        match finish(&cfg, &mut entry, true) {
+            Ok(t) if t.is_empty() && cfg.notifications => {
+                sys::notify("whispertui", "No speech found in that recording");
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("retry failed: {e:#}");
+                if cfg.notifications {
+                    sys::notify("whispertui", &format!("Transcription failed: {e:#}"));
+                }
+            }
+        }
+        sh.jobs.fetch_sub(1, Ordering::Relaxed);
+    });
+    "ok".into()
 }
 
 fn find_whisper(bin: &str) -> Result<PathBuf> {

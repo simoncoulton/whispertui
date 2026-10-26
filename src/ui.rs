@@ -2,6 +2,7 @@
 //! colour; everything comes from `app.theme`.
 use crate::app::{App, Mode};
 use crate::config::Layout;
+use crate::history::{Entry, Status as Progress};
 use crate::models;
 use crate::theme::Theme;
 use ratatui::Frame;
@@ -278,19 +279,26 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, narrow: bool) {
     let items: Vec<ListItem> = visible
         .iter()
         .map(|e| {
-            let text = e.text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let text = Span::styled(
+                list_text(e),
+                match e.status {
+                    Progress::Done => Style::new(),
+                    Progress::Transcribing => Style::new().fg(t.warning),
+                    Progress::Failed => Style::new().fg(t.error),
+                },
+            );
             if narrow {
                 ListItem::new(vec![
                     Line::from(Span::styled(
                         e.created.format("%a %d %b %H:%M").to_string(),
                         t.muted(),
                     )),
-                    Line::raw(text),
+                    Line::from(text),
                 ])
             } else {
                 ListItem::new(Line::from(vec![
                     Span::styled(e.created.format("%a %d %b %H:%M  ").to_string(), t.muted()),
-                    Span::raw(text),
+                    text,
                 ]))
             }
         })
@@ -302,6 +310,19 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, narrow: bool) {
     let mut state = app.list_state.borrow_mut();
     state.select(Some(app.selected.min(visible.len() - 1)));
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+/// One-line list text; recordings without a transcript say why in words.
+fn list_text(e: &Entry) -> String {
+    let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    match e.status {
+        Progress::Done => flat(&e.text),
+        Progress::Transcribing => "transcribing…".into(),
+        Progress::Failed => format!(
+            "failed: {}",
+            flat(e.error.as_deref().unwrap_or("unknown error"))
+        ),
+    }
 }
 
 fn draw_details(frame: &mut Frame, app: &App, area: Rect) {
@@ -329,7 +350,28 @@ fn draw_details(frame: &mut Frame, app: &App, area: Rect) {
                 },
             ]),
             Line::raw(""),
-            Line::raw(e.text.clone()),
+            match e.status {
+                Progress::Done => Line::raw(e.text.clone()),
+                Progress::Transcribing => {
+                    Line::from(Span::styled("Transcribing…", Style::new().fg(t.warning)))
+                }
+                Progress::Failed => Line::from(Span::styled(
+                    format!(
+                        "Transcription failed: {}",
+                        e.error.as_deref().unwrap_or("unknown error")
+                    ),
+                    Style::new().fg(t.error),
+                )),
+            },
+            Line::raw(""),
+            if e.status == Progress::Failed {
+                Line::from(vec![
+                    key(t, "t"),
+                    Span::styled(" transcribe it again", t.muted()),
+                ])
+            } else {
+                Line::raw("")
+            },
         ],
     };
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
@@ -466,6 +508,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("y", "copy the transcript to the clipboard"),
             ("space", "start / stop recording"),
             ("a", "play the audio; again to stop it"),
+            ("t", "transcribe a failed recording again"),
             ("d", "delete (asks first)"),
             ("/", "search transcripts; Esc clears"),
         ],
@@ -1059,6 +1102,25 @@ mod tests {
         let details_row = rows.iter().position(|r| r.contains("Details")).unwrap();
         assert!(details_row > list_row, "{s}");
         assert!(!rows[list_row].contains("Details"));
+    }
+
+    #[test]
+    fn failed_and_unfinished_recordings_are_listed_with_the_reason() {
+        use crate::app::tests::failed;
+        let mut a = app();
+        let mut running = entry("8", "");
+        running.status = Progress::Transcribing;
+        a.set_entries(vec![running, failed("9")]);
+        let s = render(&a, 100, 20);
+        assert!(s.contains("transcribing…"), "{s}");
+        assert!(s.contains("failed: whisper-cli: boom"), "{s}");
+        a.handle_key(kev(crossterm::event::KeyCode::Down));
+        let s = render(&a, 100, 20);
+        assert!(s.contains("Transcription failed: whisper-cli: boom"), "{s}");
+        assert!(s.contains("t transcribe it again"), "{s}");
+        // Never panics small.
+        render(&a, 0, 0);
+        render(&a, 10, 4);
     }
 
     #[test]

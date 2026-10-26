@@ -400,6 +400,15 @@ fn perform(
             }
             Err(e) => app.flash_err(format!("Delete failed: {e}")),
         },
+        Action::Retry(id) => {
+            match daemon::request(&format!("retry {id}")) {
+                Ok(r) if r == "ok" => app.flash_ok("Transcribing again"),
+                Ok(r) => app.flash_err(r.trim_start_matches("error: ").to_string()),
+                Err(_) => app.flash_err("Daemon not running; run `whispertui daemon start`"),
+            }
+            env.history_mtime = None;
+            env.last_status = Instant::now() - Duration::from_secs(10);
+        }
         Action::ToggleRecord => {
             if !app.mic_ready {
                 // The daemon would refuse (and notify); say so here, in the window.
