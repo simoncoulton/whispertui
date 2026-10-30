@@ -618,6 +618,9 @@ mod tests {
 
     #[test]
     fn the_lock_allows_one_daemon_and_is_released_with_it() {
+        let _guard = crate::PROCESS_TESTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("whispertui-lock-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("run").join("daemon.lock");
@@ -630,8 +633,8 @@ mod tests {
         let err = acquire_lock(&path).unwrap_err().to_string();
         assert!(err.contains("already running"), "{err}");
         drop(first);
-        // Released when the daemon goes. (Poll: another thread forking a child
-        // can briefly hold a copy of the descriptor until that child execs.)
+        // Released when the daemon goes. (Poll: a child forked by another
+        // thread can briefly hold a copy of the descriptor until it execs.)
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while lock_held(&path) && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));

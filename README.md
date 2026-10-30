@@ -4,19 +4,39 @@ Hotkey voice-to-text for macOS. Press a key, speak, press it again: the
 transcript is on your clipboard. A TUI keeps the history. Transcription runs
 locally with [whisper.cpp](https://github.com/ggml-org/whisper.cpp).
 
-## Install
+## Installation
+
+### macOS (Homebrew)
+
+Homebrew on macOS (Apple Silicon and Intel) is the supported way to install, with prebuilt binaries:
 
 ```sh
-brew install whisper-cpp              # provides whisper-cli
+brew tap simoncoulton/whispertui https://github.com/simoncoulton/whispertui
+brew install whispertui
+```
+
+The formula installs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`whisper-cli`) for you.
+
+### Arch Linux and other distributions
+
+There is no package for Arch or its derivatives yet. Build from source with a recent
+[Rust toolchain](https://rustup.rs) (1.89 or newer):
+
+```sh
+git clone https://github.com/simoncoulton/whispertui
+cd whispertui
 cargo build --release
 ./target/release/whispertui           # opens the TUI and starts the daemon
 ```
 
-Press `M` in the TUI to pick and download a model (the default is
-`large-v3-turbo-q5_0`, 547 MB), then `whispertui install` to start the daemon at
+You also need `whisper-cli`; see [Troubleshooting](#troubleshooting) for building it on Arch.
+
+Then press `M` in the TUI to pick and download a model (the default is
+`large-v3-turbo-q5_0`, 547 MB), and run `whispertui install` to start the daemon at
 login. macOS asks for Microphone and Input Monitoring access (the global hotkey
 needs the second). Models are downloaded into `~/.config/whispertui/models/`;
 whispertui does not use models from other apps.
+
 
 ## How it runs
 

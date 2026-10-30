@@ -366,6 +366,9 @@ mod tests {
 
     #[test]
     fn cancelling_kills_the_process_and_removes_the_partial_file() {
+        let _guard = crate::PROCESS_TESTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         use std::sync::Arc;
         let dir = std::env::temp_dir().join(format!("whispertui-dl-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

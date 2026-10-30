@@ -2,6 +2,10 @@
 name = "whispertui"
 version = "0.1.0"
 edition = "2024"
+description = "Hotkey voice-to-text for macOS using local whisper.cpp"
+license = "MIT"
+repository = "https://github.com/simoncoulton/whispertui"
+rust-version = "1.89"
 
 [dependencies]
 anyhow = "1.0.104"

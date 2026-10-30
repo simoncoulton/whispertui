@@ -29,7 +29,11 @@ pub fn copy(text: &str) -> Result<()> {
     // pbcopy honours the locale; launchd agents have none, which mangles UTF-8.
     if MACOS {
         return pipe_to("pbcopy", &[], text).and_then(|ran| {
-            if ran { Ok(()) } else { bail!("pbcopy not found") }
+            if ran {
+                Ok(())
+            } else {
+                bail!("pbcopy not found")
+            }
         });
     }
     let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
@@ -115,8 +119,5 @@ pub fn sound(name: &str) {
         _ => "dialog-warning",
     };
     let file = format!("/usr/share/sounds/freedesktop/stereo/{event}.oga");
-    spawn_first(&[
-        ("pw-play", vec![file.clone()]),
-        ("paplay", vec![file]),
-    ]);
+    spawn_first(&[("pw-play", vec![file.clone()]), ("paplay", vec![file])]);
 }

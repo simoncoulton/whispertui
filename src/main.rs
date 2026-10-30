@@ -14,6 +14,11 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use std::process::Command;
 
+/// Tests that spawn child processes or hold the daemon lock take this, so a
+/// child forked mid-test can't briefly inherit the lock's file descriptor.
+#[cfg(test)]
+pub(crate) static PROCESS_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[derive(Parser)]
 #[command(about = "Hotkey voice-to-text with a history browser")]
 struct Cli {
